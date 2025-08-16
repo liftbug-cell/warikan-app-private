@@ -1,5 +1,5 @@
-# ==== 完全版・認証機能付きAI割り勘システム ====
-# Streamlit Cloud対応 + セキュリティ強化版
+# ==== 機能強化版・認証機能付きAI割り勘システム ====
+# テンプレート・保存・継続機能追加版
 
 import streamlit as st
 import pandas as pd
@@ -15,14 +15,15 @@ from datetime import datetime
 import random
 import json
 import hashlib
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import time
 import base64
 from io import BytesIO
+import pickle
 
 # ==== ページ設定（最初に実行） ====
 st.set_page_config(
-    page_title="🍻 友達限定AI割り勘システム",
+    page_title="🍻 友達限定AI割り勘システム Pro",
     page_icon="🍻",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -40,6 +41,50 @@ st.markdown("""
         margin-bottom: 2rem;
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
     }
+    .template-card {
+        background: linear-gradient(135deg, #e8f4f8 0%, #d1ecf1 100%);
+        border: 1px solid #bee5eb;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+    .template-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        background: linear-gradient(135deg, #d1ecf1 0%, #bee5eb 100%);
+    }
+    .history-card {
+        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        border: 1px solid #dee2e6;
+        border-radius: 10px;
+        padding: 1.2rem;
+        margin: 0.8rem 0;
+        border-left: 4px solid #28a745;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+    .session-restore {
+        background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%);
+        border: 1px solid #ffeaa7;
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
+        border-left: 4px solid #ffc107;
+    }
+    .feature-badge {
+        display: inline-block;
+        background: linear-gradient(45deg, #28a745, #20c997);
+        color: white;
+        padding: 0.2rem 0.6rem;
+        border-radius: 12px;
+        font-size: 0.7rem;
+        margin: 0.1rem;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    /* 既存のCSS... */
     .auth-container {
         max-width: 500px;
         margin: 3rem auto;
@@ -76,16 +121,6 @@ st.markdown("""
         margin: 0.2rem;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
-    .participant-card {
-        background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-        border: 1px solid #dee2e6;
-        border-radius: 10px;
-        padding: 1.2rem;
-        margin: 0.8rem 0;
-        border-left: 4px solid #667eea;
-        transition: all 0.3s ease;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-    }
     .result-highlight {
         background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%);
         border: 1px solid #c3e6cb;
@@ -111,17 +146,125 @@ st.markdown("""
         padding: 1rem;
         margin: 1rem 0;
     }
-    .git-info {
-        background: linear-gradient(135deg, #e8f4f8 0%, #d1ecf1 100%);
-        border: 1px solid #bee5eb;
-        border-radius: 10px;
-        padding: 1rem;
-        margin: 1rem 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# ==== Git連携認証システム ====
+# ==== データ管理システム ====
+class DataManager:
+    def __init__(self, username: str):
+        self.username = username
+        self.templates_key = f"templates_{username}"
+        self.history_key = f"history_{username}"
+        self.session_key = f"session_{username}"
+    
+    def save_template(self, template_name: str, participants: List[Dict]) -> bool:
+        """参加者テンプレートを保存"""
+        try:
+            if self.templates_key not in st.session_state:
+                st.session_state[self.templates_key] = {}
+            
+            template_data = {
+                'name': template_name,
+                'participants': participants,
+                'created_at': datetime.now().isoformat(),
+                'created_by': self.username
+            }
+            
+            st.session_state[self.templates_key][template_name] = template_data
+            return True
+        except Exception as e:
+            st.error(f"テンプレート保存エラー: {str(e)}")
+            return False
+    
+    def load_templates(self) -> Dict:
+        """保存済みテンプレートを読み込み"""
+        return st.session_state.get(self.templates_key, {})
+    
+    def delete_template(self, template_name: str) -> bool:
+        """テンプレートを削除"""
+        try:
+            if self.templates_key in st.session_state and template_name in st.session_state[self.templates_key]:
+                del st.session_state[self.templates_key][template_name]
+                return True
+            return False
+        except:
+            return False
+    
+    def save_calculation_history(self, calculation_data: Dict) -> bool:
+        """計算結果履歴を保存"""
+        try:
+            if self.history_key not in st.session_state:
+                st.session_state[self.history_key] = []
+            
+            history_item = {
+                'id': f"calc_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{random.randint(1000,9999)}",
+                'calculation_time': datetime.now().isoformat(),
+                'total_amount': calculation_data.get('total_amount'),
+                'participants': calculation_data.get('participants'),
+                'results': calculation_data.get('results'),
+                'sum_warikan': calculation_data.get('sum_warikan'),
+                'diff': calculation_data.get('diff'),
+                'calculator': self.username
+            }
+            
+            # 最新10件のみ保持
+            st.session_state[self.history_key].insert(0, history_item)
+            if len(st.session_state[self.history_key]) > 10:
+                st.session_state[self.history_key] = st.session_state[self.history_key][:10]
+            
+            return True
+        except Exception as e:
+            st.error(f"履歴保存エラー: {str(e)}")
+            return False
+    
+    def load_calculation_history(self) -> List[Dict]:
+        """計算履歴を読み込み"""
+        return st.session_state.get(self.history_key, [])
+    
+    def delete_history_item(self, item_id: str) -> bool:
+        """履歴アイテムを削除"""
+        try:
+            if self.history_key in st.session_state:
+                st.session_state[self.history_key] = [
+                    item for item in st.session_state[self.history_key] 
+                    if item['id'] != item_id
+                ]
+                return True
+            return False
+        except:
+            return False
+    
+    def save_session_data(self, session_data: Dict) -> bool:
+        """作業中セッションデータを保存"""
+        try:
+            auto_save_data = {
+                'participants': session_data.get('participants', []),
+                'total_amount': session_data.get('total_amount', 10000),
+                'last_saved': datetime.now().isoformat(),
+                'session_id': session_data.get('session_id'),
+                'calculation_results': session_data.get('calculation_results')
+            }
+            
+            st.session_state[self.session_key] = auto_save_data
+            return True
+        except Exception as e:
+            st.error(f"セッション保存エラー: {str(e)}")
+            return False
+    
+    def load_session_data(self) -> Optional[Dict]:
+        """保存されたセッションデータを読み込み"""
+        return st.session_state.get(self.session_key)
+    
+    def clear_session_data(self) -> bool:
+        """セッションデータをクリア"""
+        try:
+            if self.session_key in st.session_state:
+                del st.session_state[self.session_key]
+            return True
+        except:
+            return False
+
+# ==== Git連携認証システム（既存） ====
 class GitFriendsAuth:
     def __init__(self):
         # 🔐 友達データベース（ハッシュ化済みパスワード + Git情報）
@@ -130,7 +273,7 @@ class GitFriendsAuth:
                 "password_hash": self._hash("tanaka123"),
                 "display_name": "田中さん",
                 "github_username": "tanaka_dev",
-                "permissions": ["create", "view", "calculate", "export"],
+                "permissions": ["create", "view", "calculate", "export", "template"],
                 "created_at": "2024-08-15",
                 "last_login": None,
                 "login_count": 0,
@@ -140,7 +283,7 @@ class GitFriendsAuth:
                 "password_hash": self._hash("sato456"),
                 "display_name": "佐藤さん",
                 "github_username": "sato_coder",
-                "permissions": ["view", "calculate"],
+                "permissions": ["view", "calculate", "template"],
                 "created_at": "2024-08-15",
                 "last_login": None,
                 "login_count": 0,
@@ -150,7 +293,7 @@ class GitFriendsAuth:
                 "password_hash": self._hash("yamada789"),
                 "display_name": "山田さん",
                 "github_username": "yamada_tech",
-                "permissions": ["create", "view", "calculate", "export"],
+                "permissions": ["create", "view", "calculate", "export", "template"],
                 "created_at": "2024-08-15", 
                 "last_login": None,
                 "login_count": 0,
@@ -160,7 +303,7 @@ class GitFriendsAuth:
                 "password_hash": self._hash("admin2024"),
                 "display_name": "管理者",
                 "github_username": "admin_user",
-                "permissions": ["admin", "create", "view", "calculate", "export"],
+                "permissions": ["admin", "create", "view", "calculate", "export", "template"],
                 "created_at": "2024-08-15",
                 "last_login": None,
                 "login_count": 0,
@@ -187,7 +330,6 @@ class GitFriendsAuth:
     
     def _check_git_connection(self) -> Dict:
         """Git接続状態をチェック（模擬）"""
-        # 実際の実装では git remote -v や GitHub API を使用
         return {
             "connected": True,
             "repo_url": "https://github.com/your-username/warikan-app",
@@ -262,6 +404,7 @@ def init_session_state():
         st.session_state.authenticated = False
         st.session_state.user = None
         st.session_state.git_status = None
+        st.session_state.data_manager = None
     
     if 'participants' not in st.session_state:
         st.session_state.participants = []
@@ -277,6 +420,9 @@ def init_session_state():
     
     if 'show_admin' not in st.session_state:
         st.session_state.show_admin = False
+    
+    if 'auto_save_enabled' not in st.session_state:
+        st.session_state.auto_save_enabled = True
 
 # ==== 認証チェック機能 ====
 def check_authentication():
@@ -287,6 +433,10 @@ def check_authentication():
         show_login_page()
         return False
     
+    # データマネージャー初期化
+    if st.session_state.data_manager is None:
+        st.session_state.data_manager = DataManager(st.session_state.user['username'])
+    
     return True
 
 def show_login_page():
@@ -296,6 +446,9 @@ def show_login_page():
         <h1>🔒 友達限定アクセス</h1>
         <p>このAI割り勘システムは招待された友達のみ利用できます</p>
         <p>✨ AI遺伝的アルゴリズムで公平な割り勘計算 ✨</p>
+        <span class="feature-badge">NEW</span> テンプレート機能
+        <span class="feature-badge">NEW</span> 履歴保存
+        <span class="feature-badge">NEW</span> 自動復元
     </div>
     """, unsafe_allow_html=True)
     
@@ -303,16 +456,19 @@ def show_login_page():
     deployment_info = auth_system.get_deployment_info()
     
     st.markdown(f"""
-    <div class="git-info">
-        <strong>🚀 デプロイメント情報:</strong><br>
+    <div class="demo-info">
+        <strong>🚀 Pro版機能:</strong><br>
         📍 Platform: {deployment_info['platform']}<br>
         🔓 Repository: {deployment_info['repo_visibility']}<br>
         🛡️ Security: {deployment_info['security_level']}<br>
-        👥 承認済み友達: {deployment_info['approved_friends']}/{deployment_info['total_registered']}人
+        👥 承認済み友達: {deployment_info['approved_friends']}/{deployment_info['total_registered']}人<br>
+        <span class="feature-badge">👥 テンプレート</span>
+        <span class="feature-badge">💾 履歴保存</span>
+        <span class="feature-badge">🔄 自動復元</span>
     </div>
     """, unsafe_allow_html=True)
     
-    # ログインフォーム
+    # ログインフォーム（簡略化）
     with st.container():
         col1, col2, col3 = st.columns([1, 2, 1])
         
@@ -321,7 +477,6 @@ def show_login_page():
             
             st.markdown("### 👤 ログイン")
             
-            # ログインフォーム
             with st.form("login_form", clear_on_submit=False):
                 username = st.text_input("👤 ユーザー名", placeholder="例: 田中")
                 password = st.text_input("🔑 パスワード", type="password", placeholder="パスワードを入力")
@@ -334,17 +489,17 @@ def show_login_page():
                 with col_demo:
                     demo_button = st.form_submit_button("📋 デモ情報", use_container_width=True)
                 
-                # ログイン処理
                 if login_button:
                     if username and password:
                         with st.spinner("認証中..."):
-                            time.sleep(0.5)  # ユーザー体験向上
+                            time.sleep(0.5)
                             result = auth_system.authenticate(username, password)
                             
                             if result["success"]:
                                 st.session_state.authenticated = True
                                 st.session_state.user = result["user"]
                                 st.session_state.git_status = result["git_status"]
+                                st.session_state.data_manager = DataManager(username)
                                 st.success(f"✅ {result['user']['display_name']}、ようこそ！")
                                 st.balloons()
                                 time.sleep(1)
@@ -354,62 +509,29 @@ def show_login_page():
                     else:
                         st.warning("👆 ユーザー名とパスワードを入力してください")
                 
-                # デモ情報表示
                 if demo_button:
                     st.markdown("""
                     <div class="demo-info">
-                    <strong>📋 デモアカウント情報:</strong><br><br>
+                    <strong>📋 Pro版デモアカウント:</strong><br><br>
                     
                     👤 <strong>田中</strong> / 🔑 <code>tanaka123</code><br>
-                    <small>GitHub: tanaka_dev | 権限: フル機能</small><br><br>
+                    <small>GitHub: tanaka_dev | 権限: フル機能+テンプレート</small><br><br>
                     
                     👤 <strong>佐藤</strong> / 🔑 <code>sato456</code><br>
-                    <small>GitHub: sato_coder | 権限: 閲覧・計算のみ</small><br><br>
+                    <small>GitHub: sato_coder | 権限: 閲覧・計算・テンプレート</small><br><br>
                     
                     👤 <strong>山田</strong> / 🔑 <code>yamada789</code><br>
-                    <small>GitHub: yamada_tech | 権限: フル機能</small><br><br>
+                    <small>GitHub: yamada_tech | 権限: フル機能+テンプレート</small><br><br>
                     
                     👤 <strong>admin</strong> / 🔑 <code>admin2024</code><br>
-                    <small>GitHub: admin_user | 権限: 管理者</small>
+                    <small>GitHub: admin_user | 権限: 管理者+全機能</small>
                     </div>
                     """, unsafe_allow_html=True)
             
             st.markdown('</div>', unsafe_allow_html=True)
-            
-            # アプリ紹介
-            st.markdown("---")
-            st.markdown("### ✨ このアプリの特徴")
-            
-            col_feat1, col_feat2 = st.columns(2)
-            with col_feat1:
-                st.markdown("""
-                🤖 **AI最適化**
-                - 遺伝的アルゴリズム
-                - 役職別公平配分
-                - 自動丸め計算
-                - リアルタイム最適化
-                """)
-            
-            with col_feat2:
-                st.markdown("""
-                📊 **可視化分析**
-                - インタラクティブグラフ
-                - 日本語対応チャート
-                - CSV結果出力
-                - 統計分析ダッシュボード
-                """)
-            
-            st.markdown("""
-            ### 🛡️ セキュリティ機能
-            - 🔐 パスワードハッシュ化
-            - 👥 権限ベースアクセス制御
-            - 📊 ログイン履歴管理
-            - 🔗 Git連携認証
-            - 🚫 パブリックリポジトリでも安全
-            """)
 
 def show_user_info():
-    """👤 ユーザー情報表示（Git情報付き）"""
+    """👤 ユーザー情報表示（新機能バッジ付き）"""
     user = st.session_state.user
     git_status = st.session_state.git_status
     
@@ -423,10 +545,219 @@ def show_user_info():
         <strong>🔢 ログイン回数:</strong> {user['login_count']}回<br>
         <strong>🎫 権限:</strong> 
         {''.join([f'<span class="permission-badge">{p}</span>' for p in user['permissions']])}
+        <br><br>
+        <strong>✨ Pro機能:</strong>
+        <span class="feature-badge">👥 テンプレート</span>
+        <span class="feature-badge">💾 履歴保存</span>
+        <span class="feature-badge">🔄 自動復元</span>
     </div>
     """, unsafe_allow_html=True)
 
-# ==== フォント設定 ====
+# ==== テンプレート管理機能 ====
+def show_template_management():
+    """👥 テンプレート管理機能"""
+    st.subheader("👥 参加者テンプレート管理")
+    
+    data_manager = st.session_state.data_manager
+    
+    # 権限チェック
+    if "template" not in st.session_state.user['permissions']:
+        st.error("❌ テンプレート機能の権限がありません")
+        return
+    
+    col_template1, col_template2 = st.columns([1, 1])
+    
+    with col_template1:
+        # テンプレート保存
+        st.markdown("#### 💾 新規テンプレート保存")
+        
+        if st.session_state.participants:
+            with st.form("save_template_form"):
+                template_name = st.text_input(
+                    "📝 テンプレート名", 
+                    placeholder="例: 会社飲み会メンバー"
+                )
+                
+                st.markdown("**保存対象参加者:**")
+                for participant in st.session_state.participants:
+                    st.write(f"• {participant['名前']} ({participant['役職']})")
+                
+                save_template_btn = st.form_submit_button("💾 テンプレート保存", use_container_width=True)
+                
+                if save_template_btn and template_name:
+                    success = data_manager.save_template(template_name, st.session_state.participants)
+                    if success:
+                        st.success(f"✅ テンプレート「{template_name}」を保存しました")
+                        st.rerun()
+                    else:
+                        st.error("❌ テンプレート保存に失敗しました")
+                elif save_template_btn:
+                    st.warning("👆 テンプレート名を入力してください")
+        else:
+            st.info("💡 参加者を追加してからテンプレートを保存できます")
+    
+    with col_template2:
+        # 保存済みテンプレート一覧
+        st.markdown("#### 📂 保存済みテンプレート")
+        
+        templates = data_manager.load_templates()
+        
+        if templates:
+            for template_name, template_data in templates.items():
+                with st.container():
+                    st.markdown(f"""
+                    <div class="template-card">
+                        <strong>📁 {template_name}</strong><br>
+                        <small>👥 {len(template_data['participants'])}人 | 
+                        📅 {template_data['created_at'][:10]}</small><br>
+                        <small>参加者: {', '.join([p['名前'] for p in template_data['participants'][:3]])}
+                        {'...' if len(template_data['participants']) > 3 else ''}</small>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    col_load, col_delete = st.columns([3, 1])
+                    
+                    with col_load:
+                        if st.button(f"📥 読み込み", key=f"load_template_{template_name}", use_container_width=True):
+                            st.session_state.participants = template_data['participants'].copy()
+                            st.success(f"✅ テンプレート「{template_name}」を読み込みました")
+                            st.rerun()
+                    
+                    with col_delete:
+                        if st.button(f"🗑️", key=f"delete_template_{template_name}", help="テンプレート削除"):
+                            success = data_manager.delete_template(template_name)
+                            if success:
+                                st.success(f"✅ テンプレート「{template_name}」を削除しました")
+                                st.rerun()
+        else:
+            st.info("📝 保存済みテンプレートがありません")
+
+# ==== 履歴管理機能 ====
+def show_calculation_history():
+    """💾 計算履歴管理機能"""
+    st.subheader("📊 計算履歴")
+    
+    data_manager = st.session_state.data_manager
+    history = data_manager.load_calculation_history()
+    
+    if history:
+        st.info(f"📈 過去の計算結果: {len(history)}件")
+        
+        for i, history_item in enumerate(history):
+            calc_time = datetime.fromisoformat(history_item['calculation_time'])
+            
+            with st.container():
+                st.markdown(f"""
+                <div class="history-card">
+                    <strong>🧮 計算 #{i+1}</strong><br>
+                    <small>📅 {calc_time.strftime('%Y年%m月%d日 %H:%M')} | 
+                    💰 {history_item['total_amount']:,}円 | 
+                    👥 {len(history_item['participants'])}人</small><br>
+                    <small>差額: {history_item['diff']:+,}円 | 
+                    計算後: {history_item['sum_warikan']:,}円</small>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                col_detail, col_restore, col_delete = st.columns([2, 1, 1])
+                
+                with col_detail:
+                    with st.expander("📋 詳細を見る"):
+                        # 参加者情報
+                        st.markdown("**👥 参加者:**")
+                        participants_df = pd.DataFrame(history_item['participants'])
+                        st.dataframe(participants_df[['名前', '役職']], hide_index=True)
+                        
+                        # 計算結果
+                        if 'results' in history_item and history_item['results'] is not None:
+                            st.markdown("**💰 計算結果:**")
+                            results_df = pd.DataFrame(history_item['results'])
+                            if '負担額_丸め' in results_df.columns:
+                                display_results = results_df[['名前', '役職', '負担額_丸め']].copy()
+                                display_results['負担額_丸め'] = display_results['負担額_丸め'].astype(int)
+                                display_results.columns = ['名前', '役職', '負担額（円）']
+                                st.dataframe(display_results, hide_index=True)
+                
+                with col_restore:
+                    if st.button("🔄 復元", key=f"restore_history_{history_item['id']}", use_container_width=True):
+                        # 参加者と設定を復元
+                        st.session_state.participants = history_item['participants'].copy()
+                        st.session_state.total_amount = history_item['total_amount']
+                        
+                        # 計算結果も復元（もしあれば）
+                        if 'results' in history_item:
+                            st.session_state.calculation_results = {
+                                'df_result': pd.DataFrame(history_item['results']) if history_item['results'] else None,
+                                'sum_warikan': history_item['sum_warikan'],
+                                'diff': history_item['diff'],
+                                'calculation_time': history_item['calculation_time'],
+                                'calculator': history_item['calculator']
+                            }
+                        
+                        st.success("✅ 履歴から復元しました")
+                        st.rerun()
+                
+                with col_delete:
+                    if st.button("🗑️", key=f"delete_history_{history_item['id']}", help="履歴削除"):
+                        success = data_manager.delete_history_item(history_item['id'])
+                        if success:
+                            st.success("✅ 履歴を削除しました")
+                            st.rerun()
+    else:
+        st.info("📝 計算履歴がありません")
+
+# ==== セッション復元機能 ====
+def show_session_restore():
+    """🔄 セッション復元機能"""
+    data_manager = st.session_state.data_manager
+    saved_session = data_manager.load_session_data()
+    
+    if saved_session:
+        last_saved = datetime.fromisoformat(saved_session['last_saved'])
+        time_diff = datetime.now() - last_saved
+        
+        # 24時間以内の保存データのみ表示
+        if time_diff.total_seconds() < 86400:  # 24時間
+            st.markdown(f"""
+            <div class="session-restore">
+                <strong>🔄 前回の作業を発見しました</strong><br>
+                <small>💾 保存時刻: {last_saved.strftime('%Y年%m月%d日 %H:%M')}</small><br>
+                <small>👥 参加者: {len(saved_session.get('participants', []))}人 | 
+                💰 金額: {saved_session.get('total_amount', 0):,}円</small>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col_restore, col_ignore = st.columns(2)
+            
+            with col_restore:
+                if st.button("🔄 前回の作業を復元", use_container_width=True, type="primary"):
+                    st.session_state.participants = saved_session.get('participants', [])
+                    st.session_state.total_amount = saved_session.get('total_amount', 10000)
+                    st.session_state.session_id = saved_session.get('session_id', st.session_state.session_id)
+                    if saved_session.get('calculation_results'):
+                        st.session_state.calculation_results = saved_session['calculation_results']
+                    
+                    st.success("✅ 前回の作業を復元しました")
+                    st.rerun()
+            
+            with col_ignore:
+                if st.button("🆕 新規作業開始", use_container_width=True):
+                    data_manager.clear_session_data()
+                    st.success("✅ 新規作業を開始しました")
+                    st.rerun()
+
+# ==== 自動保存機能 ====
+def auto_save_session():
+    """🔄 自動保存機能"""
+    if st.session_state.auto_save_enabled and st.session_state.data_manager:
+        session_data = {
+            'participants': st.session_state.participants,
+            'total_amount': st.session_state.total_amount,
+            'session_id': st.session_state.session_id,
+            'calculation_results': st.session_state.calculation_results
+        }
+        st.session_state.data_manager.save_session_data(session_data)
+
+# ==== フォント設定（既存） ====
 def setup_fonts():
     """フォント設定"""
     try:
@@ -454,7 +785,7 @@ def setup_fonts():
 current_font, is_japanese_font = setup_fonts()
 plt.rcParams['axes.unicode_minus'] = False
 
-# ==== AI最適化エンジン ====
+# ==== AI最適化エンジン（既存） ====
 class AIWarikanOptimizer:
     def __init__(self):
         self.default_params = {
@@ -470,14 +801,13 @@ class AIWarikanOptimizer:
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        iterations = 25  # 最適化精度向上
+        iterations = 25
         
         for iteration in range(iterations):
             progress = (iteration + 1) / iterations
             progress_bar.progress(progress)
             status_text.text(f"🤖 AI最適化中... {iteration+1}/{iterations} 世代")
             
-            # 計算処理
             df_calc = df_participants.copy()
             df_calc['比率'] = df_calc['役職'].map(best_params)
             total_weight = df_calc['比率'].sum()
@@ -489,28 +819,24 @@ class AIWarikanOptimizer:
             sum_warikan = df_calc['負担額_丸め'].sum()
             diff = sum_warikan - total_amount
             
-            # 収束判定
             if abs(diff) <= marume:
                 progress_bar.progress(1.0)
                 status_text.success("✅ 最適解発見！")
                 break
             
-            # パラメータ調整（遺伝的アルゴリズム風）
             adjustment = 0.01 if abs(diff) > 1000 else 0.005
             mutation_rate = 0.02
             
-            if diff > 0:  # 総額が高すぎる
+            if diff > 0:
                 for role in ['事業部長', '部長', '課長', '主査']:
                     if role in best_params:
                         best_params[role] *= (1 - adjustment)
-                        # 突然変異
                         if random.random() < mutation_rate:
                             best_params[role] *= random.uniform(0.95, 1.05)
-            else:  # 総額が安すぎる
+            else:
                 for role in ['事業部長', '部長', '課長', '主査']:
                     if role in best_params:
                         best_params[role] *= (1 + adjustment)
-                        # 突然変異
                         if random.random() < mutation_rate:
                             best_params[role] *= random.uniform(0.95, 1.05)
         
@@ -519,7 +845,7 @@ class AIWarikanOptimizer:
         
         return df_calc, sum_warikan, diff, best_params
 
-# ==== 可視化システム ====
+# ==== 可視化システム（既存） ====
 class AdvancedChartGenerator:
     @staticmethod
     def create_interactive_charts(df_result, total_amount, sum_warikan):
@@ -529,7 +855,6 @@ class AdvancedChartGenerator:
             '主査': '#96CEB4', '担当': '#FFEAA7'
         }
         
-        # 4つのサブプロット
         fig = make_subplots(
             rows=2, cols=2,
             subplot_titles=('👥 個人別負担額', '💼 役職別平均', '🥧 負担額分布', '📊 詳細統計'),
@@ -539,7 +864,7 @@ class AdvancedChartGenerator:
         
         colors_list = [role_colors.get(role, '#95A5A6') for role in df_result['役職']]
         
-        # 1. 個人別負担額（横棒グラフ）
+        # 1. 個人別負担額
         fig.add_trace(
             go.Bar(
                 x=df_result['負担額_丸め'],
@@ -569,7 +894,7 @@ class AdvancedChartGenerator:
             row=1, col=2
         )
         
-        # 3. 負担額分布（円グラフ）
+        # 3. 負担額分布
         fig.add_trace(
             go.Pie(
                 labels=df_result['名前'],
@@ -608,7 +933,6 @@ class AdvancedChartGenerator:
             row=2, col=2
         )
         
-        # レイアウト調整
         fig.update_layout(
             height=800,
             title=dict(
@@ -638,11 +962,11 @@ def generate_csv_output(df_result, total_amount, sum_warikan):
 
 # ==== メインアプリケーション ====
 def main():
-    """🎯 メインアプリケーション"""
+    """🎯 メインアプリケーション（Pro版）"""
     
-    # 🔐 認証チェック（最重要！）
+    # 🔐 認証チェック
     if not check_authentication():
-        return  # 認証失敗時は処理終了
+        return
     
     # セッション初期化
     init_session_state()
@@ -650,12 +974,18 @@ def main():
     # ユーザー情報表示
     show_user_info()
     
+    # セッション復元チェック
+    show_session_restore()
+    
     # メインヘッダー
     user = st.session_state.user
     st.markdown(f'''
     <div class="main-header">
-        <h1>🍻 AI割り勘システム</h1>
+        <h1>🍻 AI割り勘システム Pro</h1>
         <p>友達限定版 - {user['display_name']}さん専用ダッシュボード</p>
+        <span class="feature-badge">👥 テンプレート</span>
+        <span class="feature-badge">💾 履歴保存</span>
+        <span class="feature-badge">🔄 自動復元</span>
     </div>
     ''', unsafe_allow_html=True)
     
@@ -690,7 +1020,11 @@ def main():
             step=500,
             help="飲み会・食事会などの合計金額を入力"
         )
-        st.session_state.total_amount = total_amount
+        
+        # 金額変更時の自動保存
+        if total_amount != st.session_state.total_amount:
+            st.session_state.total_amount = total_amount
+            auto_save_session()
         
         marume_unit = st.selectbox(
             "🔢 丸め単位（円）",
@@ -699,6 +1033,25 @@ def main():
             help="支払い金額を丸める単位"
         )
         
+        # Pro機能設定
+        st.subheader("✨ Pro機能設定")
+        
+        auto_save_enabled = st.checkbox(
+            "🔄 自動保存",
+            value=st.session_state.auto_save_enabled,
+            help="作業内容を自動的に保存します"
+        )
+        st.session_state.auto_save_enabled = auto_save_enabled
+        
+        # データ統計
+        if st.session_state.data_manager:
+            templates = st.session_state.data_manager.load_templates()
+            history = st.session_state.data_manager.load_calculation_history()
+            
+            st.subheader("📊 データ統計")
+            st.metric("📁 保存テンプレート", len(templates))
+            st.metric("📈 計算履歴", len(history))
+        
         # Git接続情報
         git_status = st.session_state.git_status
         if git_status:
@@ -706,13 +1059,16 @@ def main():
             if git_status.get("connected"):
                 st.success("✅ 接続中")
                 st.caption(f"📍 {git_status.get('repo_url', 'N/A')}")
-                st.caption(f"🌿 Branch: {git_status.get('branch', 'N/A')}")
             else:
                 st.error("❌ 未接続")
         
         # ログアウト
         st.subheader("🚪 セッション管理")
         if st.button("🚪 ログアウト", type="secondary", use_container_width=True):
+            # 自動保存
+            auto_save_session()
+            
+            # セッションクリア
             st.session_state.authenticated = False
             st.session_state.user = None
             st.session_state.git_status = None
@@ -728,7 +1084,13 @@ def main():
         return
     
     # メインコンテンツ
-    tab1, tab2, tab3 = st.tabs(["👥 参加者管理", "🧮 AI計算", "📊 結果分析"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "👥 参加者管理", 
+        "📁 テンプレート", 
+        "🧮 AI計算", 
+        "📊 結果分析", 
+        "📈 履歴"
+    ])
     
     # ==== タブ1: 参加者管理 ====
     with tab1:
@@ -769,6 +1131,7 @@ def main():
                                 '追加者': user['display_name']
                             })
                             st.success(f"✅ {new_name}さん（{new_role}）を追加しました")
+                            auto_save_session()  # 自動保存
                             st.rerun()
                         else:
                             st.warning("⚠️ 同じ名前の参加者が既に存在します")
@@ -785,26 +1148,31 @@ def main():
             st.subheader("📋 参加者一覧")
             
             for i, participant in enumerate(st.session_state.participants):
-                with st.container():
+                col_info, col_delete = st.columns([4, 1])
+                
+                with col_info:
                     st.markdown(f"""
-                    <div class="participant-card">
-                        <strong>👤 {participant['名前']}</strong> 
-                        <span class="permission-badge">{participant['役職']}</span><br>
-                        <small>追加: {participant['追加日時']} by {participant['追加者']}</small>
-                    </div>
+                    **👤 {participant['名前']}** 
+                    <span style="background: linear-gradient(45deg, #667eea, #764ba2); color: white; padding: 0.2rem 0.6rem; border-radius: 12px; font-size: 0.8rem;">{participant['役職']}</span>
                     """, unsafe_allow_html=True)
-                    
-                    # 削除ボタン
+                    st.caption(f"追加: {participant['追加日時']} by {participant['追加者']}")
+                
+                with col_delete:
                     if "create" in user['permissions']:
-                        if st.button(f"🗑️ 削除", key=f"delete_{i}", help=f"{participant['名前']}さんを削除"):
+                        if st.button("🗑️", key=f"delete_{i}", help=f"{participant['名前']}さんを削除"):
                             st.session_state.participants.pop(i)
                             st.success(f"✅ {participant['名前']}さんを削除しました")
+                            auto_save_session()
                             st.rerun()
         else:
             st.info("👆 まずは参加者を追加してください")
     
-    # ==== タブ2: AI計算 ====
+    # ==== タブ2: テンプレート管理 ====
     with tab2:
+        show_template_management()
+    
+    # ==== タブ3: AI計算 ====
+    with tab3:
         st.subheader("🧮 AI遺伝的アルゴリズム計算")
         
         # 権限チェック
@@ -852,7 +1220,18 @@ def main():
                         'calculator': user['display_name']
                     }
                     
-                    st.success("✅ 最適化完了！")
+                    # 履歴保存
+                    calculation_data = {
+                        'total_amount': total_amount,
+                        'participants': st.session_state.participants,
+                        'results': df_result.to_dict('records'),
+                        'sum_warikan': sum_warikan,
+                        'diff': diff
+                    }
+                    st.session_state.data_manager.save_calculation_history(calculation_data)
+                    
+                    auto_save_session()  # 自動保存
+                    st.success("✅ 最適化完了！履歴に保存しました")
                     time.sleep(0.5)
                     st.rerun()
         
@@ -876,193 +1255,6 @@ def main():
             # 結果テーブル
             st.subheader("💰 個人別負担額")
             
-            # 表示用データフレーム
             display_df = df_result[['名前', '役職', '負担額_丸め']].copy()
             display_df['負担額_丸め'] = display_df['負担額_丸め'].astype(int)
             display_df.columns = ['名前', '役職', '負担額（円）']
-            
-            st.dataframe(
-                display_df,
-                use_container_width=True,
-                hide_index=True
-            )
-            
-            # 最適化パラメータ表示
-            with st.expander("🔧 AI最適化パラメータ"):
-                params_df = pd.DataFrame([
-                    {'役職': role, '比率': f"{ratio:.3f}"}
-                    for role, ratio in results['best_params'].items()
-                ])
-                st.dataframe(params_df, hide_index=True)
-    
-    # ==== タブ3: 結果分析 ====
-    with tab3:
-        st.subheader("📊 結果分析・可視化")
-        
-        if not st.session_state.calculation_results:
-            st.warning("⚠️ 先にAI計算を実行してください")
-            return
-        
-        results = st.session_state.calculation_results
-        df_result = results['df_result']
-        sum_warikan = results['sum_warikan']
-        
-        # インタラクティブチャート生成
-        chart_generator = AdvancedChartGenerator()
-        fig = chart_generator.create_interactive_charts(df_result, total_amount, sum_warikan)
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # 統計分析
-        col_stats1, col_stats2 = st.columns(2)
-        
-        with col_stats1:
-            st.subheader("📈 統計サマリー")
-            
-            stats_data = {
-                "平均負担額": f"{df_result['負担額_丸め'].mean():.0f}円",
-                "標準偏差": f"{df_result['負担額_丸め'].std():.0f}円",
-                "最大負担額": f"{df_result['負担額_丸め'].max():.0f}円",
-                "最小負担額": f"{df_result['負担額_丸め'].min():.0f}円",
-                "負担額範囲": f"{df_result['負担額_丸め'].max() - df_result['負担額_丸め'].min():.0f}円"
-            }
-            
-            for key, value in stats_data.items():
-                st.metric(key, value)
-        
-        with col_stats2:
-            st.subheader("💼 役職別分析")
-            
-            role_analysis = df_result.groupby('役職').agg({
-                '負担額_丸め': ['count', 'mean', 'sum']
-            }).round(0)
-            
-            role_analysis.columns = ['人数', '平均負担額', '合計負担額']
-            st.dataframe(role_analysis)
-        
-        # CSV出力
-        if "export" in user['permissions']:
-            st.subheader("📥 データ出力")
-            
-            csv_data = generate_csv_output(df_result, total_amount, sum_warikan)
-            
-            st.download_button(
-                label="📥 CSV形式でダウンロード",
-                data=csv_data,
-                file_name=f"warikan_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        else:
-            st.info("ℹ️ CSV出力権限がありません")
-
-# ==== 管理者ダッシュボード ====
-def show_admin_dashboard():
-    """👨‍💼 管理者ダッシュボード（Git連携情報付き）"""
-    if "admin" not in st.session_state.user['permissions']:
-        st.error("❌ 管理者権限が必要です")
-        return
-    
-    st.markdown("""
-    <div class="main-header">
-        <h1>🛠️ 管理者ダッシュボード</h1>
-        <p>ユーザー管理 & システム統計 & Git連携</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # システム情報
-    deployment_info = auth_system.get_deployment_info()
-    
-    # メトリクス表示
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("👥 登録ユーザー", deployment_info["total_registered"])
-    col2.metric("✅ 承認済み", deployment_info["approved_friends"])
-    col3.metric("🔒 セキュリティ", deployment_info["security_level"])
-    col4.metric("🚀 プラットフォーム", deployment_info["platform"])
-    
-    # Git連携情報
-    st.subheader("🔗 Git連携状況")
-    
-    git_status = st.session_state.git_status
-    if git_status:
-        col_git1, col_git2 = st.columns(2)
-        
-        with col_git1:
-            st.info(f"""
-            **リポジトリ情報:**
-            - URL: {git_status.get('repo_url', 'N/A')}
-            - ブランチ: {git_status.get('branch', 'N/A')}
-            - 最終コミット: {git_status.get('last_commit', 'N/A')}
-            """)
-        
-        with col_git2:
-            st.success(f"""
-            **デプロイ情報:**
-            - 可視性: {deployment_info['repo_visibility']}
-            - 認証方式: {deployment_info['auth_method']}
-            - セキュリティレベル: {deployment_info['security_level']}
-            """)
-    
-    # ユーザー管理
-    st.subheader("👥 ユーザー管理")
-    
-    # 友達データベースの情報を表示
-    user_data = []
-    for username, data in auth_system.friends_db.items():
-        user_data.append({
-            "ユーザー名": username,
-            "表示名": data["display_name"],
-            "GitHub": data["github_username"],
-            "Git認証": "✅" if data["git_verified"] else "❌",
-            "権限数": len(data["permissions"]),
-            "権限": ", ".join(data["permissions"]),
-            "ログイン回数": data["login_count"],
-            "最終ログイン": data["last_login"] or "未ログイン",
-            "作成日": data["created_at"],
-            "承認状態": "✅" if username in auth_system.approved_friends else "❌"
-        })
-    
-    df_users = pd.DataFrame(user_data)
-    st.dataframe(df_users, use_container_width=True)
-    
-    # 承認済み友達リスト管理
-    st.subheader("🎫 承認済み友達リスト")
-    
-    st.info(f"""
-    **現在の承認済みユーザー:**
-    {', '.join(auth_system.approved_friends)}
-    
-    **設定方法:**
-    Streamlit Cloud の環境変数 `APPROVED_FRIENDS` で管理
-    例: "田中,佐藤,山田,admin"
-    """)
-    
-    # セッション統計
-    st.subheader("📊 セッション統計")
-    
-    if hasattr(st.session_state, 'calculation_results') and st.session_state.calculation_results:
-        results = st.session_state.calculation_results
-        
-        session_stats = {
-            "セッションID": st.session_state.session_id,
-            "最終計算時刻": results.get('calculation_time', 'N/A'),
-            "計算者": results.get('calculator', 'N/A'),
-            "参加者数": len(st.session_state.participants),
-            "計算済み": "✅" if results else "❌"
-        }
-        
-        col_session1, col_session2 = st.columns(2)
-        
-        with col_session1:
-            for key, value in list(session_stats.items())[:3]:
-                st.metric(key, value)
-        
-        with col_session2:
-            for key, value in list(session_stats.items())[3:]:
-                st.metric(key, value)
-    else:
-        st.info("まだ計算が実行されていません")
-
-# ==== アプリケーション実行 ====
-if __name__ == "__main__":
-    main()
