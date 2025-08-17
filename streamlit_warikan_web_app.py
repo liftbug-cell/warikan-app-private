@@ -1,4 +1,4 @@
-# ==== 機能強化版・認証機能付きAI割り勘システム ====
+# ==== 完全版・認証機能付きAI割り勘システム Pro ====
 # テンプレート・保存・継続機能追加版
 
 import streamlit as st
@@ -19,7 +19,6 @@ from typing import Dict, Optional, List
 import time
 import base64
 from io import BytesIO
-import pickle
 
 # ==== ページ設定（最初に実行） ====
 st.set_page_config(
@@ -84,7 +83,6 @@ st.markdown("""
         margin: 0.1rem;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
-    /* 既存のCSS... */
     .auth-container {
         max-width: 500px;
         margin: 3rem auto;
@@ -264,7 +262,7 @@ class DataManager:
         except:
             return False
 
-# ==== Git連携認証システム（既存） ====
+# ==== Git連携認証システム ====
 class GitFriendsAuth:
     def __init__(self):
         # 🔐 友達データベース（ハッシュ化済みパスワード + Git情報）
@@ -468,7 +466,7 @@ def show_login_page():
     </div>
     """, unsafe_allow_html=True)
     
-    # ログインフォーム（簡略化）
+    # ログインフォーム
     with st.container():
         col1, col2, col3 = st.columns([1, 2, 1])
         
@@ -757,7 +755,7 @@ def auto_save_session():
         }
         st.session_state.data_manager.save_session_data(session_data)
 
-# ==== フォント設定（既存） ====
+# ==== フォント設定 ====
 def setup_fonts():
     """フォント設定"""
     try:
@@ -785,7 +783,7 @@ def setup_fonts():
 current_font, is_japanese_font = setup_fonts()
 plt.rcParams['axes.unicode_minus'] = False
 
-# ==== AI最適化エンジン（既存） ====
+# ==== AI最適化エンジン ====
 class AIWarikanOptimizer:
     def __init__(self):
         self.default_params = {
@@ -845,7 +843,7 @@ class AIWarikanOptimizer:
         
         return df_calc, sum_warikan, diff, best_params
 
-# ==== 可視化システム（既存） ====
+# ==== 可視化システム ====
 class AdvancedChartGenerator:
     @staticmethod
     def create_interactive_charts(df_result, total_amount, sum_warikan):
@@ -1258,3 +1256,240 @@ def main():
             display_df = df_result[['名前', '役職', '負担額_丸め']].copy()
             display_df['負担額_丸め'] = display_df['負担額_丸め'].astype(int)
             display_df.columns = ['名前', '役職', '負担額（円）']
+            
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            # 最適化パラメータ表示
+            with st.expander("🔧 AI最適化パラメータ"):
+                params_df = pd.DataFrame([
+                    {'役職': role, '比率': f"{ratio:.3f}"}
+                    for role, ratio in results['best_params'].items()
+                ])
+                st.dataframe(params_df, hide_index=True)
+    
+    # ==== タブ4: 結果分析 ====
+    with tab4:
+        st.subheader("📊 結果分析・可視化")
+        
+        if not st.session_state.calculation_results:
+            st.warning("⚠️ 先にAI計算を実行してください")
+            return
+        
+        results = st.session_state.calculation_results
+        df_result = results['df_result']
+        sum_warikan = results['sum_warikan']
+        
+        # インタラクティブチャート生成
+        chart_generator = AdvancedChartGenerator()
+        fig = chart_generator.create_interactive_charts(df_result, total_amount, sum_warikan)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # 統計分析
+        col_stats1, col_stats2 = st.columns(2)
+        
+        with col_stats1:
+            st.subheader("📈 統計サマリー")
+            
+            stats_data = {
+                "平均負担額": f"{df_result['負担額_丸め'].mean():.0f}円",
+                "標準偏差": f"{df_result['負担額_丸め'].std():.0f}円",
+                "最大負担額": f"{df_result['負担額_丸め'].max():.0f}円",
+                "最小負担額": f"{df_result['負担額_丸め'].min():.0f}円",
+                "負担額範囲": f"{df_result['負担額_丸め'].max() - df_result['負担額_丸め'].min():.0f}円"
+            }
+            
+            for key, value in stats_data.items():
+                st.metric(key, value)
+        
+        with col_stats2:
+            st.subheader("💼 役職別分析")
+            
+            role_analysis = df_result.groupby('役職').agg({
+                '負担額_丸め': ['count', 'mean', 'sum']
+            }).round(0)
+            
+            role_analysis.columns = ['人数', '平均負担額', '合計負担額']
+            st.dataframe(role_analysis)
+        
+        # CSV出力
+        if "export" in user['permissions']:
+            st.subheader("📥 データ出力")
+            
+            csv_data = generate_csv_output(df_result, total_amount, sum_warikan)
+            
+            st.download_button(
+                label="📥 CSV形式でダウンロード",
+                data=csv_data,
+                file_name=f"warikan_result_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        else:
+            st.info("ℹ️ CSV出力権限がありません")
+    
+    # ==== タブ5: 履歴 ====
+    with tab5:
+        show_calculation_history()
+
+# ==== 管理者ダッシュボード ====
+def show_admin_dashboard():
+    """👨‍💼 管理者ダッシュボード（Pro版）"""
+    if "admin" not in st.session_state.user['permissions']:
+        st.error("❌ 管理者権限が必要です")
+        return
+    
+    st.markdown("""
+    <div class="main-header">
+        <h1>🛠️ 管理者ダッシュボード Pro</h1>
+        <p>ユーザー管理 & システム統計 & データ分析</p>
+        <span class="feature-badge">👥 テンプレート統計</span>
+        <span class="feature-badge">💾 履歴分析</span>
+        <span class="feature-badge">🔄 セッション管理</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # システム情報
+    deployment_info = auth_system.get_deployment_info()
+    
+    # メトリクス表示
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("👥 登録ユーザー", deployment_info["total_registered"])
+    col2.metric("✅ 承認済み", deployment_info["approved_friends"])
+    col3.metric("🔒 セキュリティ", deployment_info["security_level"])
+    col4.metric("🚀 プラットフォーム", deployment_info["platform"])
+    
+    # Pro版統計
+    st.subheader("📊 Pro版機能統計")
+    
+    # 全ユーザーのデータ統計
+    total_templates = 0
+    total_history = 0
+    active_sessions = 0
+    
+    for username in auth_system.approved_friends:
+        if username in auth_system.friends_db:
+            user_data_manager = DataManager(username)
+            templates = user_data_manager.load_templates()
+            history = user_data_manager.load_calculation_history()
+            session_data = user_data_manager.load_session_data()
+            
+            total_templates += len(templates)
+            total_history += len(history)
+            if session_data:
+                active_sessions += 1
+    
+    col_pro1, col_pro2, col_pro3 = st.columns(3)
+    col_pro1.metric("📁 総テンプレート数", total_templates)
+    col_pro2.metric("📈 総計算履歴数", total_history)
+    col_pro3.metric("🔄 アクティブセッション", active_sessions)
+    
+    # ユーザー別データ分析
+    st.subheader("👥 ユーザー別Pro機能利用状況")
+    
+    user_stats = []
+    for username in auth_system.approved_friends:
+        if username in auth_system.friends_db:
+            user_data = auth_system.friends_db[username]
+            user_data_manager = DataManager(username)
+            
+            templates = user_data_manager.load_templates()
+            history = user_data_manager.load_calculation_history()
+            session_data = user_data_manager.load_session_data()
+            
+            user_stats.append({
+                "ユーザー名": username,
+                "表示名": user_data["display_name"],
+                "ログイン回数": user_data["login_count"],
+                "テンプレート数": len(templates),
+                "計算履歴数": len(history),
+                "セッション保存": "✅" if session_data else "❌",
+                "最終ログイン": user_data["last_login"] or "未ログイン"
+            })
+    
+    df_user_stats = pd.DataFrame(user_stats)
+    st.dataframe(df_user_stats, use_container_width=True, hide_index=True)
+    
+    # Git連携情報
+    st.subheader("🔗 Git連携状況")
+    
+    git_status = st.session_state.git_status
+    if git_status:
+        col_git1, col_git2 = st.columns(2)
+        
+        with col_git1:
+            st.info(f"""
+            **リポジトリ情報:**
+            - URL: {git_status.get('repo_url', 'N/A')}
+            - ブランチ: {git_status.get('branch', 'N/A')}
+            - 最終コミット: {git_status.get('last_commit', 'N/A')}
+            """)
+        
+        with col_git2:
+            st.success(f"""
+            **Pro版デプロイ情報:**
+            - 可視性: {deployment_info['repo_visibility']}
+            - 認証方式: {deployment_info['auth_method']}
+            - セキュリティレベル: {deployment_info['security_level']}
+            - Pro機能: 有効
+            """)
+    
+    # システム管理機能
+    st.subheader("🛠️ システム管理")
+    
+    col_admin1, col_admin2 = st.columns(2)
+    
+    with col_admin1:
+        st.markdown("#### 🗑️ データクリーンアップ")
+        
+        if st.button("🧹 古いセッションデータをクリア", help="24時間以上前のセッションデータを削除"):
+            cleared_count = 0
+            for username in auth_system.approved_friends:
+                user_data_manager = DataManager(username)
+                session_data = user_data_manager.load_session_data()
+                
+                if session_data:
+                    last_saved = datetime.fromisoformat(session_data['last_saved'])
+                    if (datetime.now() - last_saved).total_seconds() > 86400:  # 24時間
+                        user_data_manager.clear_session_data()
+                        cleared_count += 1
+            
+            st.success(f"✅ {cleared_count}件の古いセッションデータをクリアしました")
+    
+    with col_admin2:
+        st.markdown("#### 📊 使用状況分析")
+        
+        # 利用者の活動状況グラフ
+        if df_user_stats is not None and not df_user_stats.empty:
+            fig_usage = px.bar(
+                df_user_stats,
+                x='ユーザー名',
+                y=['テンプレート数', '計算履歴数'],
+                title="ユーザー別Pro機能利用状況",
+                barmode='group'
+            )
+            st.plotly_chart(fig_usage, use_container_width=True)
+    
+    # 承認済み友達リスト管理
+    st.subheader("🎫 承認済み友達リスト")
+    
+    st.info(f"""
+    **現在の承認済みユーザー:**
+    {', '.join(auth_system.approved_friends)}
+    
+    **Pro版機能の利用状況:**
+    - テンプレート機能: {len([u for u in user_stats if u['テンプレート数'] > 0])}人が利用中
+    - 履歴保存機能: {len([u for u in user_stats if u['計算履歴数'] > 0])}人が利用中
+    - セッション保存: {len([u for u in user_stats if u['セッション保存'] == '✅'])}人が利用中
+    
+    **設定方法:**
+    Streamlit Cloud の環境変数 `APPROVED_FRIENDS` で管理
+    """)
+
+# ==== アプリケーション実行 ====
+if __name__ == "__main__":
+    main()
