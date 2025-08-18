@@ -1693,11 +1693,30 @@ git_verified = true
 
 # 5. 管理者ダッシュボード機能
 def show_admin_dashboard():
-    """👨‍💼 管理者ダッシュボード（カスタム倍率機能追加版）"""
+    """👨‍💼 管理者ダッシュボード（一般ユーザー対応版）"""
+    # 管理者権限チェック（全体レベル）
     if "admin" not in st.session_state.user['permissions']:
         st.error("❌ 管理者権限が必要です")
+        st.info("💡 一般ユーザーは基本機能をご利用ください")
+        
+        # 一般ユーザー向けの案内
+        st.markdown("""
+        <div class="user-info">
+            <h3>🔍 利用可能な機能</h3>
+            <p>一般ユーザーは以下の機能をご利用いただけます：</p>
+            <ul>
+                <li>👥 参加者管理</li>
+                <li>📁 テンプレート機能</li>
+                <li>🧮 AI計算</li>
+                <li>📊 結果分析</li>
+                <li>📈 履歴表示</li>
+            </ul>
+            <p><strong>管理者機能をご利用の場合は、管理者権限のあるアカウントでログインしてください。</strong></p>
+        </div>
+        """, unsafe_allow_html=True)
         return
     
+    # 管理者の場合のダッシュボード表示
     st.markdown("""
     <div class="main-header">
         <h1>🛠️ セキュア管理者ダッシュボード</h1>
@@ -1950,40 +1969,357 @@ def show_custom_multiplier_management():
                             st.markdown(f"- **{name}**: 通常（1.0倍）")
 
 # 7. 計算結果表示の修正（倍率詳細表示）
-def show_calculation_results_with_multipliers():
-    """計算結果表示（管理者設定倍率情報付き）"""
-    if st.session_state.calculation_results:
-        results = st.session_state.calculation_results
-        df_result = results['df_result']
-        sum_warikan = results['sum_warikan']
-        diff = results['diff']
-        total_amount = st.session_state.total_amount
+# ==== 修正版: show_admin_dashboard関数 ====
+
+def show_admin_dashboard():
+    """👨‍💼 管理者ダッシュボード（一般ユーザー対応版）"""
+    # 管理者権限チェック（全体レベル）
+    if "admin" not in st.session_state.user['permissions']:
+        st.error("❌ 管理者権限が必要です")
+        st.info("💡 一般ユーザーは基本機能をご利用ください")
         
-        st.markdown(f"""
-        <div class="result-highlight">
-            <h3>🎯 計算結果</h3>
-            <p><strong>計算時刻:</strong> {results['calculation_time']}</p>
-            <p><strong>計算者:</strong> {results['calculator']}</p>
-            <p><strong>合計金額:</strong> {sum_warikan:,}円 (目標: {total_amount:,}円)</p>
-            <p><strong>差額:</strong> {diff:+,}円</p>
+        # 一般ユーザー向けの案内
+        st.markdown("""
+        <div class="user-info">
+            <h3>🔍 利用可能な機能</h3>
+            <p>一般ユーザーは以下の機能をご利用いただけます：</p>
+            <ul>
+                <li>👥 参加者管理</li>
+                <li>📁 テンプレート機能</li>
+                <li>🧮 AI計算</li>
+                <li>📊 結果分析</li>
+                <li>📈 履歴表示</li>
+            </ul>
+            <p><strong>管理者機能をご利用の場合は、管理者権限のあるアカウントでログインしてください。</strong></p>
         </div>
         """, unsafe_allow_html=True)
+        return
+    
+    # 管理者の場合のダッシュボード表示
+    st.markdown("""
+    <div class="main-header">
+        <h1>🛠️ セキュア管理者ダッシュボード</h1>
+        <p>TOML管理 & ユーザー管理 & システム統計 & カスタム倍率設定</p>
+        <span class="feature-badge">🔐 TOML管理</span>
+        <span class="feature-badge">👥 ユーザー管理</span>
+        <span class="feature-badge">📊 統計分析</span>
+        <span class="feature-badge">🎯 倍率設定</span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # タブで機能を分割（カスタム倍率タブを追加）
+    tab1, tab2, tab3, tab4 = st.tabs(["👥 ユーザー管理", "📊 統計・分析", "🔐 TOML設定", "🎯 倍率設定"])
+    
+    with tab1:
+        show_secure_user_management()
+    
+    with tab2:
+        show_admin_statistics()
+    
+    with tab3:
+        show_toml_configuration()
+    
+    with tab4:
+        show_custom_multiplier_management()
+
+# ==== 修正版: show_custom_multiplier_management関数 ====
+
+def show_custom_multiplier_management():
+    """🎯 管理者専用カスタム倍率設定（一般ユーザー対応版）"""
+    st.subheader("🎯 カスタム倍率設定")
+    
+    # 管理者権限チェック（関数レベル）
+    if "admin" not in st.session_state.user['permissions']:
+        st.error("❌ この機能は管理者専用です")
+        st.info("💡 カスタム倍率は管理者が設定済みの場合、自動的に適用されます")
         
-        # 結果テーブル（詳細倍率表示付き）
-        st.subheader("💰 個人別負担額（倍率詳細付き）")
+        # 一般ユーザー向けの情報表示
+        try:
+            multiplier_manager = CustomMultiplierManager()
+            rules = multiplier_manager.load_multiplier_rules()
+            
+            if rules:
+                st.markdown("#### 📋 現在適用中の倍率ルール")
+                st.success(f"✅ {len(rules)}個のカスタム倍率ルールが設定されています")
+                
+                # 一般ユーザー向けの簡易表示
+                for rule_name, rule_data in rules.items():
+                    with st.expander(f"🎯 {rule_name} ({rule_data['multiplier']}倍)", expanded=False):
+                        st.write(f"**対象パターン:** {', '.join(rule_data['name_patterns'])}")
+                        st.write(f"**倍率:** {rule_data['multiplier']}倍")
+                        st.write(f"**理由:** {rule_data.get('reason', '未設定')}")
+                        
+                        # 一般ユーザー用のテストマッチング
+                        st.markdown("**🔍 自分の名前でテスト:**")
+                        test_name = st.text_input(
+                            "あなたの名前を入力",
+                            key=f"user_test_{rule_name}",
+                            placeholder="例: 山田太郎さん"
+                        )
+                        
+                        if test_name:
+                            result_multiplier = multiplier_manager.find_matching_multiplier(test_name)
+                            
+                            if result_multiplier != 1.0:
+                                st.success(f"✅ あなたに適用される倍率: {result_multiplier}倍")
+                            else:
+                                st.info("ℹ️ 通常倍率（1.0倍）が適用されます")
+                
+                # 一括テスト機能（一般ユーザー用）
+                st.markdown("#### 🔍 名前マッチング確認")
+                
+                with st.form("user_bulk_test"):
+                    test_names = st.text_area(
+                        "テスト用名前リスト（1行に1名）",
+                        placeholder="山田太郎\n田中花子さん\n佐藤君",
+                        help="あなたや仲間の名前を入力して倍率を確認"
+                    )
+                    
+                    if st.form_submit_button("🔍 倍率確認"):
+                        if test_names:
+                            st.markdown("**確認結果:**")
+                            
+                            for name in test_names.strip().split('\n'):
+                                name = name.strip()
+                                if name:
+                                    multiplier = multiplier_manager.find_matching_multiplier(name)
+                                    
+                                    if multiplier != 1.0:
+                                        st.markdown(f"- **{name}**: <span style='color: #ff6b6b; font-weight: bold;'>{multiplier}倍</span>", unsafe_allow_html=True)
+                                    else:
+                                        st.markdown(f"- **{name}**: 通常（1.0倍）")
+            else:
+                st.info("📝 現在、カスタム倍率ルールは設定されていません")
+                st.markdown("""
+                <div style="background: linear-gradient(135deg, #e8f4f8 0%, #d1ecf1 100%); border: 1px solid #bee5eb; border-radius: 10px; padding: 1rem; margin: 1rem 0;">
+                <strong>💡 カスタム倍率機能について:</strong><br>
+                • 管理者が特定の人に固定倍率を設定できます<br>
+                • 設定されると、AI計算時に自動適用されます<br>
+                • 役職による倍率に加えて適用されます
+                </div>
+                """, unsafe_allow_html=True)
+                
+        except Exception as e:
+            st.error(f"倍率情報取得エラー: {str(e)}")
         
-        display_df = df_result[['名前', '役職', '管理者設定倍率', '個別設定倍率', '最終倍率', '負担額_丸め']].copy()
-        display_df['負担額_丸め'] = display_df['負担額_丸め'].astype(int)
-        display_df['管理者設定倍率'] = display_df['管理者設定倍率'].round(1)
-        display_df['個別設定倍率'] = display_df['個別設定倍率'].round(1)
-        display_df['最終倍率'] = display_df['最終倍率'].round(1)
-        display_df.columns = ['名前', '役職', '管理者倍率', '個別倍率', '最終倍率', '負担額（円）']
+        return  # 一般ユーザーはここで終了
+    
+    # ========== 以下は管理者のみ表示 ==========
+    
+    multiplier_manager = CustomMultiplierManager()
+    
+    st.markdown("""
+    <div class="security-info">
+    <strong>🎯 カスタム倍率機能:</strong><br>
+    ✅ 特定の人に固定倍率を設定<br>
+    ✅ 柔軟な名前マッチング（山田/山田さん/山田君 すべて対応）<br>
+    ✅ 役職によらず優先適用<br>
+    ✅ 管理者のみ設定可能<br>
+    ✅ <strong>全ユーザーに適用</strong><br>
+    ✅ <strong>アプリ実行中は永続</strong>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # ストレージ状況の表示
+    st.markdown("#### 📊 ストレージ状況")
+    
+    try:
+        storage_info = multiplier_manager.get_storage_info()
         
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True
+        if storage_info.get('error'):
+            st.error("❌ ストレージ情報取得エラー")
+        else:
+            col_info1, col_info2 = st.columns(2)
+            
+            with col_info1:
+                if storage_info['has_global_storage']:
+                    st.success("✅ グローバルストレージ有効")
+                else:
+                    st.warning("⚠️ グローバルストレージ未初期化")
+                
+                st.info(f"📊 保存ルール数: {storage_info['rules_count']}個")
+                st.info(f"💾 ストレージ方式: {storage_info['storage_type']}")
+            
+            with col_info2:
+                st.info(f"⏱️ 永続性: {storage_info['persistence_level']}")
+                
+                if 'last_updated' in storage_info:
+                    st.info(f"🕒 最終更新: {storage_info['last_updated'][:16]}")
+                if 'updated_by' in storage_info:
+                    st.info(f"👤 更新者: {storage_info['updated_by']}")
+    except Exception as e:
+        st.error(f"ストレージ情報表示エラー: {str(e)}")
+    
+    # Streamlit Cloud使用時の注意事項
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border: 1px solid #ffeaa7; border-radius: 10px; padding: 1rem; margin: 1rem 0;">
+    <strong>📋 Streamlit Cloud使用時の注意:</strong><br>
+    • ルールは<strong>アプリ実行中のみ保持</strong>されます<br>
+    • アプリが再起動すると<strong>ルールはリセット</strong>されます<br>
+    • 重要なルールは<strong>エクスポート機能で保存</strong>してください<br>
+    • 定期的に<strong>バックアップを取得</strong>することをお勧めします
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 新規ルール追加
+    st.markdown("#### ➕ 新規倍率ルール追加")
+    
+    with st.form("add_multiplier_rule"):
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            rule_name = st.text_input(
+                "📝 ルール名",
+                placeholder="例: 山田さん高収入ルール",
+                help="管理しやすい名前を付けてください"
+            )
+            
+            name_patterns_input = st.text_input(
+                "👤 対象名前パターン",
+                placeholder="例: 山田,山田さん,山田君",
+                help="カンマ区切りで複数の名前パターンを指定"
+            )
+            
+            st.markdown("**💡 名前パターンの例:**")
+            st.markdown("- `山田` → 山田、山田さん、山田君 すべてにマッチ")
+            st.markdown("- `田中,田中部長` → 田中関連の名前にマッチ")
+        
+        with col2:
+            multiplier = st.number_input(
+                "🎯 倍率",
+                min_value=0.1,
+                max_value=10.0,
+                value=2.0,
+                step=0.1,
+                help="1.0=通常、2.0=2倍、0.5=半額"
+            )
+            
+            reason = st.text_area(
+                "📝 理由・備考",
+                placeholder="例: 高収入のため2倍負担",
+                help="設定理由を記録（任意）"
+            )
+        
+        add_rule_btn = st.form_submit_button("➕ ルール追加", use_container_width=True)
+        
+        if add_rule_btn and rule_name and name_patterns_input:
+            # 名前パターンをリスト化
+            name_patterns = [pattern.strip() for pattern in name_patterns_input.split(',')]
+            
+            # 新しいルールを作成
+            rules = multiplier_manager.load_multiplier_rules()
+            rules[rule_name] = {
+                'name_patterns': name_patterns,
+                'multiplier': multiplier,
+                'reason': reason,
+                'created_by': st.session_state.user['display_name'],
+                'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            if multiplier_manager.save_multiplier_rules(rules):
+                st.success(f"✅ ルール「{rule_name}」をグローバル保存しました")
+                st.info("💡 このルールは全ユーザーに適用されます（アプリ実行中）")
+                st.rerun()
+            else:
+                st.error("❌ ルール追加に失敗しました")
+        elif add_rule_btn:
+            st.warning("👆 ルール名と名前パターンを入力してください")
+    
+    # 既存ルール一覧
+    st.markdown("#### 📋 既存倍率ルール")
+    
+    rules = multiplier_manager.load_multiplier_rules()
+    
+    if rules:
+        for rule_name, rule_data in rules.items():
+            with st.expander(f"🎯 {rule_name} ({rule_data['multiplier']}倍)", expanded=False):
+                col_info, col_actions = st.columns([3, 1])
+                
+                with col_info:
+                    st.write(f"**対象パターン:** {', '.join(rule_data['name_patterns'])}")
+                    st.write(f"**倍率:** {rule_data['multiplier']}倍")
+                    st.write(f"**理由:** {rule_data.get('reason', '未設定')}")
+                    st.write(f"**作成者:** {rule_data.get('created_by', '不明')}")
+                    st.write(f"**作成日:** {rule_data.get('created_at', '不明')}")
+                    
+                    # テストマッチング
+                    st.markdown("**🔍 マッチングテスト:**")
+                    test_name = st.text_input(
+                        "テスト用名前を入力",
+                        key=f"test_{rule_name}",
+                        placeholder="例: 山田太郎さん"
+                    )
+                    
+                    if test_name:
+                        result_multiplier = multiplier_manager.find_matching_multiplier(test_name)
+                        
+                        if result_multiplier != 1.0:
+                            st.success(f"✅ マッチしました！倍率: {result_multiplier}")
+                        else:
+                            st.info("ℹ️ マッチしませんでした")
+                
+                with col_actions:
+                    if st.button("🗑️ 削除", key=f"delete_rule_{rule_name}"):
+                        if multiplier_manager.delete_multiplier_rule(rule_name):
+                            st.success(f"✅ ルール「{rule_name}」を削除しました")
+                            st.rerun()
+                        else:
+                            st.error("❌ 削除に失敗しました")
+    else:
+        st.info("📝 設定済みの倍率ルールがありません")
+    
+    # 高度な管理機能（管理者のみ）
+    st.markdown("#### 🔧 バックアップ・復元機能")
+    
+    col_export, col_import = st.columns(2)
+    
+    with col_export:
+        st.markdown("**📤 ルールバックアップ**")
+        if st.button("📋 バックアップデータを表示"):
+            export_data = multiplier_manager.export_rules_for_sharing()
+            st.code(export_data, language="json")
+            st.info("💡 上記をコピーして保存してください。アプリ再起動時に復元できます。")
+    
+    with col_import:
+        st.markdown("**📥 ルール復元**")
+        with st.form("import_rules"):
+            import_text = st.text_area(
+                "バックアップデータ",
+                placeholder='{"rules": {"ルール名": {"name_patterns": ["名前"], "multiplier": 2.0}}}',
+                help="バックアップしたJSON形式データを貼り付け"
+            )
+            
+            if st.form_submit_button("📥 復元実行"):
+                if import_text.strip():
+                    if multiplier_manager.import_rules_from_text(import_text):
+                        st.success("✅ ルールを復元しました")
+                        st.rerun()
+                else:
+                    st.warning("👆 バックアップデータを入力してください")
+    
+    # 一括テスト機能（管理者版）
+    st.markdown("#### 🔍 全ルール一括テスト")
+    
+    with st.form("bulk_test"):
+        test_names = st.text_area(
+            "テスト用名前リスト（1行に1名）",
+            placeholder="山田太郎\n田中花子さん\n佐藤君\n鈴木部長",
+            help="実際の参加者名を入力してテスト"
         )
+        
+        if st.form_submit_button("🔍 一括テスト実行"):
+            if test_names:
+                st.markdown("**テスト結果:**")
+                
+                for name in test_names.strip().split('\n'):
+                    name = name.strip()
+                    if name:
+                        multiplier = multiplier_manager.find_matching_multiplier(name)
+                        
+                        if multiplier != 1.0:
+                            st.markdown(f"- **{name}**: <span style='color: #ff6b6b; font-weight: bold;'>{multiplier}倍</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"- **{name}**: 通常（1.0倍）")
 
 # 8. メインアプリケーション機能
 def main():
