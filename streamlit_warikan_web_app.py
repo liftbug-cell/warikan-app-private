@@ -19,6 +19,8 @@ from typing import Dict, Optional, List
 import time
 import base64
 from io import BytesIO
+import os
+from pathlib import Path
 
 # ==== ページ設定 ====
 st.set_page_config(
@@ -295,6 +297,144 @@ class DataManager:
 
 # ==== カスタム倍率管理クラスの追加 ====
 class CustomMultiplierManager:
+    def __init__(self):
+        # ファイルベースの永続化ストレージ
+        self.data_file = "custom_multiplier_rules.json"
+        self.backup_key = "global_custom_multipliers_backup"  # フォールバック用
+    
+    def _get_data_file_path(self):
+        """データファイルのパスを取得"""
+        return Path(self.data_file)
+    
+    def save_multiplier_rules(self, rules: Dict) -> bool:
+        """倍率ルールを永続化保存"""
+        try:
+            # 方法1: ファイルに保存（推奨）
+            try:
+                with open(self._get_data_file_path(), 'w', encoding='utf-8') as f:
+                    json.dump(rules, f, ensure_ascii=False, indent=2)
+                
+                # セッション状態にもバックアップ保存
+                if 'global_multiplier_store' not in st.session_state:
+                    st.session_state.global_multiplier_store = {}
+                st.session_state.global_multiplier_store.update(rules)
+                
+                return True
+            except (OSError, PermissionError):
+                # ファイル保存失敗時のフォールバック: セッション状態のグローバル領域
+                if 'global_multiplier_store' not in st.session_state:
+                    st.session_state.global_multiplier_store = {}
+                st.session_state.global_multiplier_store.update(rules)
+                return True
+                
+        except Exception as e:
+            st.error(f"倍率ルール保存エラー: {str(e)}")
+            return False
+    
+    def load_multiplier_rules(self) -> Dict:
+        """倍率ルールを読み込み"""
+        try:
+            # 方法1: ファイルから読み込み
+            file_path = self._get_data_file_path()
+            if file_path.exists():
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        rules = json.load(f)
+                    
+                    # セッション状態にも同期
+                    if 'global_multiplier_store' not in st.session_state:
+                        st.session_state.global_multiplier_store = {}
+                    st.session_state.global_multiplier_store.update(rules)
+                    
+                    return rules
+                except (json.JSONDecodeError, OSError):
+                    pass
+            
+            # 方法2: セッション状態のグローバル領域から読み込み
+            if 'global_multiplier_store' in st.session_state:
+                return st.session_state.global_multiplier_store
+            
+            # 方法3: 初期値
+            return {}
+            
+        except Exception as e:
+            st.error(f"倍率ルール読み込みエラー: {str(e)}")
+            return {}
+    
+    def delete_multiplier_rule(self, rule_name: str) -> bool:
+        """倍率ルールを削除"""
+        try:
+            rules = self.load_multiplier_rules()
+            if rule_name in rules:
+                del rules[rule_name]
+                return self.save_multiplier_rules(rules)
+            return False
+        except:
+            return False
+    
+    def find_matching_multiplier(self, participant_name: str) -> float:
+        """参加者名に対応する倍率を検索（柔軟マッチング）"""
+        rules = self.load_multiplier_rules()
+        
+        for rule_name, rule_data in rules.items():
+            name_patterns = rule_data.get('name_patterns', [])
+            multiplier = rule_data.get('multiplier', 1.0)
+            
+            # 柔軟な名前マッチング
+            for pattern in name_patterns:
+                if self._flexible_name_match(participant_name, pattern):
+                    return multiplier
+        
+        return 1.0  # デフォルト倍率
+    
+    def _flexible_name_match(self, participant_name: str, pattern: str) -> bool:
+        """柔軟な名前マッチング"""
+        # 正規化：空白、「さん」「君」「ちゃん」などを除去
+        def normalize_name(name):
+            # よくある敬称を除去
+            suffixes = ['さん', 'くん', 'ちゃん', '君', '様', 'サン', 'クン']
+            normalized = name.strip()
+            for suffix in suffixes:
+                if normalized.endswith(suffix):
+                    normalized = normalized[:-len(suffix)]
+            return normalized.lower()
+        
+        normalized_participant = normalize_name(participant_name)
+        normalized_pattern = normalize_name(pattern)
+        
+        # 完全一致チェック
+        if normalized_participant == normalized_pattern:
+            return True
+        
+        # 部分一致チェック（パターンが参加者名に含まれる）
+        if normalized_pattern in normalized_participant:
+            return True
+        
+        # 参加者名がパターンに含まれる
+        if normalized_participant in normalized_pattern:
+            return True
+        
+        return False
+    
+    def export_rules_for_sharing(self) -> str:
+        """ルールを共有用形式でエクスポート"""
+        rules = self.load_multiplier_rules()
+        return json.dumps(rules, ensure_ascii=False, indent=2)
+    
+    def import_rules_from_text(self, rules_text: str) -> bool:
+        """テキストからルールをインポート"""
+        try:
+            imported_rules = json.loads(rules_text)
+            current_rules = self.load_multiplier_rules()
+            current_rules.update(imported_rules)
+            return self.save_multiplier_rules(current_rules)
+        except json.JSONDecodeError:
+            st.error("❌ インポートデータの形式が正しくありません")
+            return False
+        except Exception as e:
+            st.error(f"❌ インポートエラー: {str(e)}")
+            return False
+
     def __init__(self):
         self.multiplier_key = "global_custom_multipliers"
     
@@ -1632,6 +1772,201 @@ def show_admin_dashboard():
 
 # 6. 管理者専用倍率設定画面の追加
 def show_custom_multiplier_management():
+    """🎯 管理者専用カスタム倍率設定（永続化対応）"""
+    st.subheader("🎯 カスタム倍率設定")
+    
+    # 管理者権限チェック
+    if "admin" not in st.session_state.user['permissions']:
+        st.error("❌ この機能は管理者専用です")
+        return
+    
+    multiplier_manager = CustomMultiplierManager()
+    
+    st.markdown("""
+    <div class="security-info">
+    <strong>🎯 カスタム倍率機能:</strong><br>
+    ✅ 特定の人に固定倍率を設定<br>
+    ✅ 柔軟な名前マッチング（山田/山田さん/山田君 すべて対応）<br>
+    ✅ 役職によらず優先適用<br>
+    ✅ 管理者のみ設定可能<br>
+    ✅ <strong>全ユーザーに永続適用</strong><br>
+    ✅ <strong>ログアウト後も保持</strong>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 永続化状況の表示
+    st.markdown("#### 📊 永続化状況")
+    
+    try:
+        file_path = Path("custom_multiplier_rules.json")
+        if file_path.exists():
+            file_size = file_path.stat().st_size
+            mod_time = datetime.fromtimestamp(file_path.stat().st_mtime)
+            st.success(f"✅ ファイル保存済み（{file_size}バイト、更新: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}）")
+        else:
+            st.info("ℹ️ セッション内保存（ファイル未作成）")
+    except:
+        st.warning("⚠️ ファイル情報取得失敗")
+    
+    # 新規ルール追加
+    st.markdown("#### ➕ 新規倍率ルール追加")
+    
+    with st.form("add_multiplier_rule"):
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            rule_name = st.text_input(
+                "📝 ルール名",
+                placeholder="例: 山田さん高収入ルール",
+                help="管理しやすい名前を付けてください"
+            )
+            
+            name_patterns_input = st.text_input(
+                "👤 対象名前パターン",
+                placeholder="例: 山田,山田さん,山田君",
+                help="カンマ区切りで複数の名前パターンを指定"
+            )
+            
+            st.markdown("**💡 名前パターンの例:**")
+            st.markdown("- `山田` → 山田、山田さん、山田君 すべてにマッチ")
+            st.markdown("- `田中,田中部長` → 田中関連の名前にマッチ")
+        
+        with col2:
+            multiplier = st.number_input(
+                "🎯 倍率",
+                min_value=0.1,
+                max_value=10.0,
+                value=2.0,
+                step=0.1,
+                help="1.0=通常、2.0=2倍、0.5=半額"
+            )
+            
+            reason = st.text_area(
+                "📝 理由・備考",
+                placeholder="例: 高収入のため2倍負担",
+                help="設定理由を記録（任意）"
+            )
+        
+        add_rule_btn = st.form_submit_button("➕ ルール追加", use_container_width=True)
+        
+        if add_rule_btn and rule_name and name_patterns_input:
+            # 名前パターンをリスト化
+            name_patterns = [pattern.strip() for pattern in name_patterns_input.split(',')]
+            
+            # 新しいルールを作成
+            rules = multiplier_manager.load_multiplier_rules()
+            rules[rule_name] = {
+                'name_patterns': name_patterns,
+                'multiplier': multiplier,
+                'reason': reason,
+                'created_by': st.session_state.user['display_name'],
+                'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            if multiplier_manager.save_multiplier_rules(rules):
+                st.success(f"✅ ルール「{rule_name}」を永続保存しました")
+                st.info("💡 このルールは全ユーザーに適用され、ログアウト後も保持されます")
+                st.rerun()
+            else:
+                st.error("❌ ルール追加に失敗しました")
+        elif add_rule_btn:
+            st.warning("👆 ルール名と名前パターンを入力してください")
+    
+    # 既存ルール一覧
+    st.markdown("#### 📋 既存倍率ルール")
+    
+    rules = multiplier_manager.load_multiplier_rules()
+    
+    if rules:
+        for rule_name, rule_data in rules.items():
+            with st.expander(f"🎯 {rule_name} ({rule_data['multiplier']}倍)", expanded=False):
+                col_info, col_actions = st.columns([3, 1])
+                
+                with col_info:
+                    st.write(f"**対象パターン:** {', '.join(rule_data['name_patterns'])}")
+                    st.write(f"**倍率:** {rule_data['multiplier']}倍")
+                    st.write(f"**理由:** {rule_data.get('reason', '未設定')}")
+                    st.write(f"**作成者:** {rule_data.get('created_by', '不明')}")
+                    st.write(f"**作成日:** {rule_data.get('created_at', '不明')}")
+                    
+                    # テストマッチング
+                    st.markdown("**🔍 マッチングテスト:**")
+                    test_name = st.text_input(
+                        "テスト用名前を入力",
+                        key=f"test_{rule_name}",
+                        placeholder="例: 山田太郎さん"
+                    )
+                    
+                    if test_name:
+                        result_multiplier = multiplier_manager.find_matching_multiplier(test_name)
+                        
+                        if result_multiplier != 1.0:
+                            st.success(f"✅ マッチしました！倍率: {result_multiplier}")
+                        else:
+                            st.info("ℹ️ マッチしませんでした")
+                
+                with col_actions:
+                    if st.button("🗑️ 削除", key=f"delete_rule_{rule_name}"):
+                        if multiplier_manager.delete_multiplier_rule(rule_name):
+                            st.success(f"✅ ルール「{rule_name}」を削除しました")
+                            st.rerun()
+                        else:
+                            st.error("❌ 削除に失敗しました")
+    else:
+        st.info("📝 設定済みの倍率ルールがありません")
+    
+    # 高度な管理機能
+    st.markdown("#### 🔧 高度な管理機能")
+    
+    col_export, col_import = st.columns(2)
+    
+    with col_export:
+        st.markdown("**📤 ルールエクスポート**")
+        if st.button("📋 ルール情報をコピー用形式で表示"):
+            export_data = multiplier_manager.export_rules_for_sharing()
+            st.code(export_data, language="json")
+            st.info("💡 上記をコピーして他の管理者と共有できます")
+    
+    with col_import:
+        st.markdown("**📥 ルールインポート**")
+        with st.form("import_rules"):
+            import_text = st.text_area(
+                "インポートデータ",
+                placeholder='{"ルール名": {"name_patterns": ["名前"], "multiplier": 2.0}}',
+                help="JSON形式でルールをインポート"
+            )
+            
+            if st.form_submit_button("📥 インポート実行"):
+                if import_text.strip():
+                    if multiplier_manager.import_rules_from_text(import_text):
+                        st.success("✅ ルールをインポートしました")
+                        st.rerun()
+                else:
+                    st.warning("👆 インポートデータを入力してください")
+    
+    # 一括テスト機能
+    st.markdown("#### 🔍 全ルール一括テスト")
+    
+    with st.form("bulk_test"):
+        test_names = st.text_area(
+            "テスト用名前リスト（1行に1名）",
+            placeholder="山田太郎\n田中花子さん\n佐藤君\n鈴木部長",
+            help="実際の参加者名を入力してテスト"
+        )
+        
+        if st.form_submit_button("🔍 一括テスト実行"):
+            if test_names:
+                st.markdown("**テスト結果:**")
+                
+                for name in test_names.strip().split('\n'):
+                    name = name.strip()
+                    if name:
+                        multiplier = multiplier_manager.find_matching_multiplier(name)
+                        
+                        if multiplier != 1.0:
+                            st.markdown(f"- **{name}**: <span style='color: #ff6b6b; font-weight: bold;'>{multiplier}倍</span>", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"- **{name}**: 通常（1.0倍）")
     """🎯 管理者専用カスタム倍率設定"""
     st.subheader("🎯 カスタム倍率設定")
     
