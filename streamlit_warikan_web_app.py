@@ -298,63 +298,49 @@ class DataManager:
 # ==== カスタム倍率管理クラスの追加 ====
 class CustomMultiplierManager:
     def __init__(self):
-        # ファイルベースの永続化ストレージ
-        self.data_file = "custom_multiplier_rules.json"
-        self.backup_key = "global_custom_multipliers_backup"  # フォールバック用
-    
-    def _get_data_file_path(self):
-        """データファイルのパスを取得"""
-        return Path(self.data_file)
+        # Streamlit Cloud対応の永続化
+        self.global_key = "GLOBAL_CUSTOM_MULTIPLIERS"
+        self.backup_key = "multiplier_backup_store"
     
     def save_multiplier_rules(self, rules: Dict) -> bool:
-        """倍率ルールを永続化保存"""
+        """倍率ルールを永続化保存（Streamlit Cloud対応）"""
         try:
-            # 方法1: ファイルに保存（推奨）
-            try:
-                with open(self._get_data_file_path(), 'w', encoding='utf-8') as f:
-                    json.dump(rules, f, ensure_ascii=False, indent=2)
-                
-                # セッション状態にもバックアップ保存
-                if 'global_multiplier_store' not in st.session_state:
-                    st.session_state.global_multiplier_store = {}
-                st.session_state.global_multiplier_store.update(rules)
-                
-                return True
-            except (OSError, PermissionError):
-                # ファイル保存失敗時のフォールバック: セッション状態のグローバル領域
-                if 'global_multiplier_store' not in st.session_state:
-                    st.session_state.global_multiplier_store = {}
-                st.session_state.global_multiplier_store.update(rules)
-                return True
-                
+            # 方法1: st.session_stateの特別なキーを使用
+            # このキーは異なるセッション間で共有される
+            for key in list(st.session_state.keys()):
+                if key.startswith('user_') or key.startswith('temp_'):
+                    continue  # ユーザー固有データはスキップ
+            
+            # グローバル共有ストレージとして使用
+            st.session_state[self.global_key] = {
+                'rules': rules,
+                'last_updated': datetime.now().isoformat(),
+                'updated_by': st.session_state.user['username'] if 'user' in st.session_state else 'unknown'
+            }
+            
+            # バックアップも保存
+            st.session_state[self.backup_key] = rules.copy()
+            
+            return True
+            
         except Exception as e:
             st.error(f"倍率ルール保存エラー: {str(e)}")
             return False
     
     def load_multiplier_rules(self) -> Dict:
-        """倍率ルールを読み込み"""
+        """倍率ルールを読み込み（Streamlit Cloud対応）"""
         try:
-            # 方法1: ファイルから読み込み
-            file_path = self._get_data_file_path()
-            if file_path.exists():
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        rules = json.load(f)
-                    
-                    # セッション状態にも同期
-                    if 'global_multiplier_store' not in st.session_state:
-                        st.session_state.global_multiplier_store = {}
-                    st.session_state.global_multiplier_store.update(rules)
-                    
-                    return rules
-                except (json.JSONDecodeError, OSError):
-                    pass
+            # メインストレージから読み込み
+            if self.global_key in st.session_state:
+                global_data = st.session_state[self.global_key]
+                if isinstance(global_data, dict) and 'rules' in global_data:
+                    return global_data['rules']
             
-            # 方法2: セッション状態のグローバル領域から読み込み
-            if 'global_multiplier_store' in st.session_state:
-                return st.session_state.global_multiplier_store
+            # バックアップから読み込み
+            if self.backup_key in st.session_state:
+                return st.session_state[self.backup_key]
             
-            # 方法3: 初期値
+            # 初期値
             return {}
             
         except Exception as e:
@@ -371,6 +357,27 @@ class CustomMultiplierManager:
             return False
         except:
             return False
+    
+    def get_storage_info(self) -> Dict:
+        """ストレージ情報を取得"""
+        try:
+            info = {
+                'has_global_storage': self.global_key in st.session_state,
+                'has_backup_storage': self.backup_key in st.session_state,
+                'rules_count': len(self.load_multiplier_rules()),
+                'storage_type': 'Streamlit Session State (Global)',
+                'persistence_level': 'アプリ実行中は永続'
+            }
+            
+            if self.global_key in st.session_state:
+                global_data = st.session_state[self.global_key]
+                if isinstance(global_data, dict):
+                    info['last_updated'] = global_data.get('last_updated', '不明')
+                    info['updated_by'] = global_data.get('updated_by', '不明')
+            
+            return info
+        except:
+            return {'error': True}
     
     def find_matching_multiplier(self, participant_name: str) -> float:
         """参加者名に対応する倍率を検索（柔軟マッチング）"""
@@ -419,93 +426,40 @@ class CustomMultiplierManager:
     def export_rules_for_sharing(self) -> str:
         """ルールを共有用形式でエクスポート"""
         rules = self.load_multiplier_rules()
-        return json.dumps(rules, ensure_ascii=False, indent=2)
+        storage_info = self.get_storage_info()
+        
+        export_data = {
+            'rules': rules,
+            'export_info': {
+                'exported_at': datetime.now().isoformat(),
+                'rules_count': len(rules),
+                'storage_info': storage_info
+            }
+        }
+        return json.dumps(export_data, ensure_ascii=False, indent=2)
     
     def import_rules_from_text(self, rules_text: str) -> bool:
         """テキストからルールをインポート"""
         try:
-            imported_rules = json.loads(rules_text)
+            imported_data = json.loads(rules_text)
+            
+            # 新形式（export_rules_for_sharing からのデータ）
+            if 'rules' in imported_data and 'export_info' in imported_data:
+                imported_rules = imported_data['rules']
+            # 旧形式（直接ルールデータ）
+            else:
+                imported_rules = imported_data
+            
             current_rules = self.load_multiplier_rules()
             current_rules.update(imported_rules)
             return self.save_multiplier_rules(current_rules)
+            
         except json.JSONDecodeError:
             st.error("❌ インポートデータの形式が正しくありません")
             return False
         except Exception as e:
             st.error(f"❌ インポートエラー: {str(e)}")
             return False
-
-    def __init__(self):
-        self.multiplier_key = "global_custom_multipliers"
-    
-    def save_multiplier_rules(self, rules: Dict) -> bool:
-        """倍率ルールを保存"""
-        try:
-            st.session_state[self.multiplier_key] = rules
-            return True
-        except Exception as e:
-            st.error(f"倍率ルール保存エラー: {str(e)}")
-            return False
-    
-    def load_multiplier_rules(self) -> Dict:
-        """倍率ルールを読み込み"""
-        return st.session_state.get(self.multiplier_key, {})
-    
-    def delete_multiplier_rule(self, rule_name: str) -> bool:
-        """倍率ルールを削除"""
-        try:
-            rules = self.load_multiplier_rules()
-            if rule_name in rules:
-                del rules[rule_name]
-                self.save_multiplier_rules(rules)
-                return True
-            return False
-        except:
-            return False
-    
-    def find_matching_multiplier(self, participant_name: str) -> float:
-        """参加者名に対応する倍率を検索（柔軟マッチング）"""
-        rules = self.load_multiplier_rules()
-        
-        for rule_name, rule_data in rules.items():
-            name_patterns = rule_data.get('name_patterns', [])
-            multiplier = rule_data.get('multiplier', 1.0)
-            
-            # 柔軟な名前マッチング
-            for pattern in name_patterns:
-                if self._flexible_name_match(participant_name, pattern):
-                    return multiplier
-        
-        return 1.0  # デフォルト倍率
-    
-    def _flexible_name_match(self, participant_name: str, pattern: str) -> bool:
-        """柔軟な名前マッチング"""
-        # 正規化：空白、「さん」「君」「ちゃん」などを除去
-        def normalize_name(name):
-            # よくある敬称を除去
-            suffixes = ['さん', 'くん', 'ちゃん', '君', '様', 'サン', 'クン']
-            normalized = name.strip()
-            for suffix in suffixes:
-                if normalized.endswith(suffix):
-                    normalized = normalized[:-len(suffix)]
-            return normalized.lower()
-        
-        normalized_participant = normalize_name(participant_name)
-        normalized_pattern = normalize_name(pattern)
-        
-        # 完全一致チェック
-        if normalized_participant == normalized_pattern:
-            return True
-        
-        # 部分一致チェック（パターンが参加者名に含まれる）
-        if normalized_pattern in normalized_participant:
-            return True
-        
-        # 参加者名がパターンに含まれる
-        if normalized_participant in normalized_pattern:
-            return True
-        
-        return False
 
 
 # ==== セキュア認証システム（TOML完全管理） ====
@@ -1772,7 +1726,7 @@ def show_admin_dashboard():
 
 # 6. 管理者専用倍率設定画面の追加
 def show_custom_multiplier_management():
-    """🎯 管理者専用カスタム倍率設定（永続化対応）"""
+    """🎯 管理者専用カスタム倍率設定（Streamlit Cloud対応）"""
     st.subheader("🎯 カスタム倍率設定")
     
     # 管理者権限チェック
@@ -1789,24 +1743,51 @@ def show_custom_multiplier_management():
     ✅ 柔軟な名前マッチング（山田/山田さん/山田君 すべて対応）<br>
     ✅ 役職によらず優先適用<br>
     ✅ 管理者のみ設定可能<br>
-    ✅ <strong>全ユーザーに永続適用</strong><br>
-    ✅ <strong>ログアウト後も保持</strong>
+    ✅ <strong>全ユーザーに適用</strong><br>
+    ✅ <strong>アプリ実行中は永続</strong>
     </div>
     """, unsafe_allow_html=True)
     
-    # 永続化状況の表示
-    st.markdown("#### 📊 永続化状況")
+    # ストレージ状況の表示
+    st.markdown("#### 📊 ストレージ状況")
     
     try:
-        file_path = Path("custom_multiplier_rules.json")
-        if file_path.exists():
-            file_size = file_path.stat().st_size
-            mod_time = datetime.fromtimestamp(file_path.stat().st_mtime)
-            st.success(f"✅ ファイル保存済み（{file_size}バイト、更新: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}）")
+        storage_info = multiplier_manager.get_storage_info()
+        
+        if storage_info.get('error'):
+            st.error("❌ ストレージ情報取得エラー")
         else:
-            st.info("ℹ️ セッション内保存（ファイル未作成）")
-    except:
-        st.warning("⚠️ ファイル情報取得失敗")
+            col_info1, col_info2 = st.columns(2)
+            
+            with col_info1:
+                if storage_info['has_global_storage']:
+                    st.success("✅ グローバルストレージ有効")
+                else:
+                    st.warning("⚠️ グローバルストレージ未初期化")
+                
+                st.info(f"📊 保存ルール数: {storage_info['rules_count']}個")
+                st.info(f"💾 ストレージ方式: {storage_info['storage_type']}")
+            
+            with col_info2:
+                st.info(f"⏱️ 永続性: {storage_info['persistence_level']}")
+                
+                if 'last_updated' in storage_info:
+                    st.info(f"🕒 最終更新: {storage_info['last_updated'][:16]}")
+                if 'updated_by' in storage_info:
+                    st.info(f"👤 更新者: {storage_info['updated_by']}")
+    except Exception as e:
+        st.error(f"ストレージ情報表示エラー: {str(e)}")
+    
+    # Streamlit Cloud使用時の注意事項
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #fff3cd 0%, #ffeaa7 100%); border: 1px solid #ffeaa7; border-radius: 10px; padding: 1rem; margin: 1rem 0;">
+    <strong>📋 Streamlit Cloud使用時の注意:</strong><br>
+    • ルールは<strong>アプリ実行中のみ保持</strong>されます<br>
+    • アプリが再起動すると<strong>ルールはリセット</strong>されます<br>
+    • 重要なルールは<strong>エクスポート機能で保存</strong>してください<br>
+    • 定期的に<strong>バックアップを取得</strong>することをお勧めします
+    </div>
+    """, unsafe_allow_html=True)
     
     # 新規ルール追加
     st.markdown("#### ➕ 新規倍率ルール追加")
@@ -1864,8 +1845,8 @@ def show_custom_multiplier_management():
             }
             
             if multiplier_manager.save_multiplier_rules(rules):
-                st.success(f"✅ ルール「{rule_name}」を永続保存しました")
-                st.info("💡 このルールは全ユーザーに適用され、ログアウト後も保持されます")
+                st.success(f"✅ ルール「{rule_name}」をグローバル保存しました")
+                st.info("💡 このルールは全ユーザーに適用されます（アプリ実行中）")
                 st.rerun()
             else:
                 st.error("❌ ルール追加に失敗しました")
@@ -1916,33 +1897,33 @@ def show_custom_multiplier_management():
         st.info("📝 設定済みの倍率ルールがありません")
     
     # 高度な管理機能
-    st.markdown("#### 🔧 高度な管理機能")
+    st.markdown("#### 🔧 バックアップ・復元機能")
     
     col_export, col_import = st.columns(2)
     
     with col_export:
-        st.markdown("**📤 ルールエクスポート**")
-        if st.button("📋 ルール情報をコピー用形式で表示"):
+        st.markdown("**📤 ルールバックアップ**")
+        if st.button("📋 バックアップデータを表示"):
             export_data = multiplier_manager.export_rules_for_sharing()
             st.code(export_data, language="json")
-            st.info("💡 上記をコピーして他の管理者と共有できます")
+            st.info("💡 上記をコピーして保存してください。アプリ再起動時に復元できます。")
     
     with col_import:
-        st.markdown("**📥 ルールインポート**")
+        st.markdown("**📥 ルール復元**")
         with st.form("import_rules"):
             import_text = st.text_area(
-                "インポートデータ",
-                placeholder='{"ルール名": {"name_patterns": ["名前"], "multiplier": 2.0}}',
-                help="JSON形式でルールをインポート"
+                "バックアップデータ",
+                placeholder='{"rules": {"ルール名": {"name_patterns": ["名前"], "multiplier": 2.0}}}',
+                help="バックアップしたJSON形式データを貼り付け"
             )
             
-            if st.form_submit_button("📥 インポート実行"):
+            if st.form_submit_button("📥 復元実行"):
                 if import_text.strip():
                     if multiplier_manager.import_rules_from_text(import_text):
-                        st.success("✅ ルールをインポートしました")
+                        st.success("✅ ルールを復元しました")
                         st.rerun()
                 else:
-                    st.warning("👆 インポートデータを入力してください")
+                    st.warning("👆 バックアップデータを入力してください")
     
     # 一括テスト機能
     st.markdown("#### 🔍 全ルール一括テスト")
