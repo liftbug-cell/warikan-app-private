@@ -19,10 +19,6 @@ from typing import Dict, Optional, List
 import time
 import base64
 from io import BytesIO
-import hmac, base64, secrets, hashlib
-
-PBKDF2_ITERS = 200_000
-SALT_BYTES = 16  # 16〜32お好みで
 
 # ==== ページ設定 ====
 st.set_page_config(
@@ -387,46 +383,9 @@ class SecureAuthSystem:
             "admin_management": "Dynamic from TOML"
         }
     
-    def _legacy_sha256(self, password: str) -> str:
+    def _hash(self, password: str) -> str:
+        """SHA256でパスワードハッシュ化"""
         return hashlib.sha256(password.encode()).hexdigest()
-
-    def _pbkdf2_hash(self, password: str, salt_b: bytes, pepper: str) -> str:
-        dk = hashlib.pbkdf2_hmac(
-            "sha256",
-            (password + pepper).encode("utf-8"),
-            salt_b,
-            PBKDF2_ITERS
-        )
-        return base64.b64encode(dk).decode("ascii")
-
-    def _hash(self, password: str, salt: str | None = None, algo: str = "pbkdf2_sha256") -> tuple[str, str, str]:
-        """
-        returns: (hash, salt_b64, algo)
-        """
-        if algo == "pbkdf2_sha256":
-            pepper = st.secrets["AUTH"]["PEPPER"]
-            salt_b = base64.b64decode(salt) if salt else secrets.token_bytes(SALT_BYTES)
-            h = self._pbkdf2_hash(password, salt_b, pepper)
-            return h, base64.b64encode(salt_b).decode("ascii"), "pbkdf2_sha256"
-        elif algo == "sha256_legacy":
-            return self._legacy_sha256(password), "", "sha256_legacy"
-        else:
-            raise ValueError("unsupported algo")
-        
-    def _verify(self, password: str, stored_hash: str, salt: str | None, algo: str | None) -> bool:
-        algo = algo or "sha256_legacy"
-        if algo == "pbkdf2_sha256":
-            pepper = st.secrets["AUTH"]["PEPPER"]
-            try:
-                calc = self._pbkdf2_hash(password, base64.b64decode(salt), pepper)
-                return hmac.compare_digest(calc, stored_hash)
-            except Exception:
-                return False
-        elif algo == "sha256_legacy":
-            return hmac.compare_digest(self._legacy_sha256(password), stored_hash)
-        return False
-
-
     
     def _load_user_database(self) -> Dict:
         """secrets.toml からユーザーデータベースを構築"""
@@ -437,60 +396,37 @@ class SecureAuthSystem:
             user_info = st.secrets.get("USER_INFO", {})
             user_credentials = st.secrets.get("USER_CREDENTIALS", {})
             
-            user_info = st.secrets.get("USER_INFO", {})
-            user_credentials = st.secrets.get("USER_CREDENTIALS", {})
-
+            # 一般ユーザーを追加
             for username, info in user_info.items():
-                cred = user_credentials.get(username)
-                # 新形式: dict(hash/salt/algo) / 旧: 文字列hash
-                if isinstance(cred, dict):
-                    stored_hash = cred.get("hash") or cred.get("password_hash", "")
-                    salt = cred.get("salt", "")
-                    algo = cred.get("algo", "pbkdf2_sha256")
-                else:
-                    stored_hash = cred or self._legacy_sha256(f"{username.lower()}123")
-                    salt = ""
-                    algo = "sha256_legacy"
-
+                password_hash = user_credentials.get(username, self._hash(f"{username.lower()}123"))
+                
                 user_db[username] = {
-                    "password_hash": stored_hash,
-                    "salt": salt,
-                    "algo": algo,
+                    "password_hash": password_hash,
                     "display_name": info.get("display_name", f"{username}さん"),
                     "github_username": info.get("github_username", f"{username}_github"),
                     "permissions": info.get("permissions", ["view", "calculate"]),
                     "created_at": info.get("created_at", "2024-08-17"),
                     "last_login": None,
                     "login_count": 0,
-                    "git_verified": info.get("git_verified", False),
+                    "git_verified": info.get("git_verified", False)
                 }
-
+            
             # 🔑 管理者アカウントを追加
             admin_credentials = st.secrets.get("ADMIN_CREDENTIALS", {})
+            
             for admin_username, admin_info in admin_credentials.items():
-                if isinstance(admin_info, dict):
-                    stored_hash = admin_info.get("hash") or admin_info.get("password_hash", "")
-                    salt = admin_info.get("salt", "")
-                    algo = admin_info.get("algo", "pbkdf2_sha256")
-                else:
-                    stored_hash = str(admin_info)  # 念のため
-                    salt = ""
-                    algo = "sha256_legacy"
-
                 admin_data = {
-                    "password_hash": stored_hash,
-                    "salt": salt,
-                    "algo": algo,
+                    "password_hash": admin_info.get("password_hash", self._hash("admin123")),
                     "display_name": admin_info.get("display_name", f"{admin_username}管理者"),
                     "github_username": admin_info.get("github_username", f"{admin_username}_admin"),
                     "permissions": ["admin", "create", "view", "calculate", "export", "template"],
                     "created_at": admin_info.get("created_at", "2024-08-17"),
                     "last_login": None,
                     "login_count": 0,
-                    "git_verified": admin_info.get("git_verified", True),
+                    "git_verified": admin_info.get("git_verified", True)
                 }
                 user_db[admin_username] = admin_data
-
+            
             # デバッグ情報（開発時のみ）
             if len(user_db) == 0:
                 st.warning("⚠️ secrets.toml にユーザー情報が設定されていません")
@@ -667,9 +603,9 @@ class SecureAuthSystem:
         user = self.friends_db[username]
         
         # 3. パスワード認証
-        if not self._verify(password, user["password_hash"], user.get("salt"), user.get("algo")):
+        if self._hash(password) != user["password_hash"]:
             return {
-                "success": False,
+                "success": False, 
                 "message": "🔐 パスワードが違います"
             }
         
