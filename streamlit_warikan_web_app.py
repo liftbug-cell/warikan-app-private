@@ -1629,32 +1629,6 @@ def show_admin_dashboard():
     
     with tab4:
         show_custom_multiplier_management()
-    """👨‍💼 管理者ダッシュボード（セキュア版）"""
-    if "admin" not in st.session_state.user['permissions']:
-        st.error("❌ 管理者権限が必要です")
-        return
-    
-    st.markdown("""
-    <div class="main-header">
-        <h1>🛠️ セキュア管理者ダッシュボード</h1>
-        <p>TOML管理 & ユーザー管理 & システム統計</p>
-        <span class="feature-badge">🔐 TOML管理</span>
-        <span class="feature-badge">👥 ユーザー管理</span>
-        <span class="feature-badge">📊 統計分析</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # タブで機能を分割
-    tab1, tab2, tab3 = st.tabs(["👥 ユーザー管理", "📊 統計・分析", "🔐 TOML設定"])
-    
-    with tab1:
-        show_secure_user_management()
-    
-    with tab2:
-        show_admin_statistics()
-    
-    with tab3:
-        show_toml_configuration()
 
 # 6. 管理者専用倍率設定画面の追加
 def show_custom_multiplier_management():
